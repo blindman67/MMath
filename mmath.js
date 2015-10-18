@@ -52,8 +52,10 @@ function MMath(){
     // holds the angle if calculated
     this.angle;  // angle if avalible
     
+    //// where on the line a line calc landed
+    this.lineSegPos;
+    
 }
-
 MMath.prototype.formatNumber = function(val,format){
     // Desc: formats a number
     // Arguments:
@@ -299,27 +301,32 @@ MMath.prototype.normalize = function(x1,y1,x2,y2){
 MMath.prototype.distPointToLine = function (x, y, x1, y1, x2, y2) {
     var px = x2 - x1;
     var py = y2 - y1;
-    var u = Math.max(0, Math.min(1, ((x - x1) * px + (y - y1) * py) / (this.distSqr1 = (px * px + py * py))));
+    var u = this.lineSegPos = Math.max(0, Math.min(1, ((x - x1) * px + (y - y1) * py) / (this.distSqr1 = (px * px + py * py))));
     return Math.sqrt(Math.pow((x1 + u * px) - x, 2) + Math.pow((y1 + u * py) - y, 2));
 }
-MMath.prototype.getClosestPointOnLine= function(ax,ay,bx,by,px,py,clamp){
-    var abx = bx-ax;
-    var aby = by-ay;
+MMath.prototype.getClosestPointOnLine= function(x1,y1,x2,y2,x,y,clamp){
+    var abx, aby, apx, apy, u;
+    abx = x2-x1;
+    aby = y2-y1;
     if(abx === 0 && aby === 0){
-        return [ax,ay];
+        return [x1,y1];
     }
-    var apx = px-ax;
-    var apy = py-ay;
-    var t = (apx*abx + apy*aby) / (abx*abx + aby*aby);
+    apx = x-x1;
+    apy = y-y1;
+    u = this.lineSegPos = (apx*abx + apy*aby) / (abx*abx + aby*aby);
     if (clamp ){
-        t = Math.max(0,Math.min(1,t));
+        u = Math.max(0,Math.min(1,u));
     }
-    return [ax+abx*t,ay+aby*t];
+    return [x1+abx*u,y1+aby*u];
 }
 MMath.prototype.clamp = function(val,min,max){
     return Math.min(max,Math.max(min.val));        
 }
 MMath.prototype.randomBell = function(amount){
+    // Desc: returns a number distributed over a bell curve. 
+    // Arguments:
+    //    amount: >= 1 and only int's the distribution of the random val. 1 = no curve, 2 slightly like a bell curve
+    //           
     var val = Math.random();
     amount = Math.round(Math.max(1,amount));
     for(var i = 1; i < amount; i++){
@@ -327,24 +334,29 @@ MMath.prototype.randomBell = function(amount){
     }
     return val / amount;  
 }
-MMath.prototype.getClosestUnitOnLine = function(ax,ay,bx,by,px,py,clamp){
-    var abx = bx-ax;
-    var aby = by-ay;
+MMath.prototype.getClosestUnitOnLine = function(x1,y1,x2,y2,x,y,clamp){
+    // Desc: Gets the closest point on a line in normalised unit
+    // Arguments:
+    //    x1,y1: start of line
+    //    x2,y2: end of line
+    //    clamp: If true then clamps to the ends of line.
+    // Returns:
+    //    Number unit distance on the line 0-1 start to end,
+    // Notes: Also sets lineSegPos to result
+
+    var abx, aby, apx, apy, u;
+    abx = x2-x1;
+    aby = y2-y1;
     if(abx === 0 && aby === 0){
-        return [ax,ay];
+        return [x1,y1];
     }
-    var apx = px-ax;
-    var apy = py-ay;
-    var t = (apx*abx + apy*aby) / (abx*abx + aby*aby);
+    apx = x-x1;
+    apy = y-y1;
+    u = this.lineSegPos = (apx*abx + apy*aby) / (abx*abx + aby*aby);
     if (clamp ){
-         if (t < 0.0){
-            t = 0.0;
-        }else 
-        if (t > 1.0){
-            t = 1.0;
-        }
+        u = Math.max(0,Math.min(1,u));
     }
-    return t;
+    return u;
 }
 MMath.prototype.invert2DMatrix = function(xdx,xdy,ydx,ydy){
     var det = (xdx * ydy - xdy * ydx);
@@ -423,6 +435,192 @@ MMath.prototype.cross = function (x, y, xx, yy) {
     this.cross = (x * yy) - (y * xx );
 	return this.cross;
 };
+MMath.prototype.clipLineToLine = function(x1,y1,x2,y2,x3,y3,x4,y4){
+    // clip line segment (x3,y3) to (x4,y4) on line (x1,y1) - (x2,y2)
+    // line is clipped to the right of the cipping line;
+    // returns result containing 
+    //  clip: two points representing the clipped line
+    //  clipped: true if the line has been clipped
+    //  outside: true if the clipped point is outside the line segment (x1,y1)-(x2,y2)
+    //           only has meaning if result.clipped is true;
+    
+    var x34, y34, cross1, cross2, result, dist, endToClip, c, b;
+    result = {
+        clip:[{x:x3,y:y3},{x:x4,y:y4}],
+        clipped:false,
+        outside:undefined
+    };
+    if((x2 === x1 && y2 === y1) || (x3 === x4 && y3 === y4)){
+        return result; // one of the lines has no length so no clipping possible
+    }
+    x2 -= x1;
+    y2 -= y1;
+    x3 -= x1;
+    y3 -= y1;
+    x4 -= x1;
+    y4 -= y1;
+    var x34 = x4-x3;
+    var y34 = y4-y3;
+
+    cross1 = x2 * y3 - y2 * x3;   // get cross product. cross will be negative if line is left of clipping line
+    cross2 = x2 * y4 - y2 * x4;
+    // check if both ends of the clipped line are on the same side of the clipping line
+    if((cross1 < 0 && cross2 < 0) || (cross1 > 0 && cross2 > 0)){
+        // lines segments do not intersect so no clipping 
+        return result;        
+    }
+    dist = Math.sqrt(x2*x2+y2*y2);
+    endToClip = 0;   // assume start of clipped line is to the left
+    if(cross1 > 0){
+        endToClip = 1; // end of clipped line is left of clipping line
+    }
+    c = x2 * y34 - y2 * x34;  // get cross product of both lines
+    b = x3 * y4 - y3 * x4;  // cross product of clipped lines
+    // c will be zero if lines are parallel but that would have been vetted above
+    // so now set the intersection as the clipping point;
+    // reuse x34 and y34 to hold the intercept
+    x34 = (b * x2) / c + x1;
+    y34 = (b * y2) / c + y1;    
+    // reuse cross1 and cross2 and find distance of intercept to ends of clipping line        
+    cross1 = Math.sqrt(Math.pow(x1-x34,2) + Math.pow(y1-y34,2));  // distance to start
+    cross2 = Math.sqrt(Math.pow((x2+x1)-x34,2) + Math.pow((y1+y2)-y34,2)); // distance to end
+    // if distance to either end is greater then the clipping line length then no intercept
+    if(cross1 < dist && cross2 < dist){
+        result.outside = false; // line segments do cross
+    }else{
+        result.outside = true; // line segments do not cross
+    }
+    // set the intercept as the clip
+    result.clip[endToClip].x = x34;
+    result.clip[endToClip].y = y34;
+    result.clipped = true
+    return result;    
+    
+}
+MMath.prototype.clipLineToBox = function(x1,y1,x2,y2,top,left,bottom,right){
+    // clip line (x1,y1) to (x2,y2) to be inside a box defined as top,left, bottom,right
+    // returns undefined if the box is not two dimensional or line is outside
+    // returns array of two points representing the clipped line.
+    var width, height, clip;
+    // check if the line is inside
+    if((x1 < left && x2 < left) || (x1 > right && x2 > right) || (y1 < top && y2 < top) || (y1 > bottom && y2 > bottom)){
+        return undefined; // line segment is outside the box;
+    }
+    width = right-left;
+    if(width === 0){ //  not a box if it does not have a width
+        return undefined;
+    }
+    height = bottom-top;
+    if(height === 0){ //  not a box if it does not have a height
+        return undefined;
+    }
+    clip = this.clipLineToUnitBox((x1-left)/width,(y1-top)/height,(x2-left)/width,(y2-top)/height);
+    if(clip !== undefined){ // make sure it has not been clipped out
+        // rescale back to original 
+        clip[0].x = clip[0].x*width + left; 
+        clip[0].y = clip[0].y*height + top; 
+        clip[1].x = clip[1].x*width + left; 
+        clip[1].y = clip[1].y*height + top; 
+        return clip;
+    }
+    return undefined;    
+}
+MMath.prototype.clipLineToUnitBox = function(x1,y1,x2,y2){
+    // clip line (x1,y1) to (x2,y2) to be inside a unit box top left 0,0 bottom right 1,1
+    // returns undefined if the line is outside
+    // returns array of two points representing the clipped line.    
+    var clip, m;
+    clip = [{x:x1,y:y1},{x:x2,y:y2}]
+    if((x1 < 0 && x2 < 0) || (x1 > 1 && x2 > 1) || (y1 < 0 && y2 < 0) || (y1 > 1 && y2 > 1)){
+        return undefined; // line segment is outside the box;
+    }
+    if(x1 === x2){ // vertical line 
+        clip[0].y = y1 < 0 ? 0 : (y1 > 1 ? 1 : y1); // clip start
+        clip[1].y = y2 < 0 ? 0 : (y2 > 1 ? 1 : y2); // clip end;
+        return clip;
+    }
+    if(y1 === y2){ // horizontal line 
+        clip[0].x = x1 < 0 ? 0 : (x1 > 1 ? 1 : x1); // clip start
+        clip[1].x = x2 < 0 ? 0 : (x2 > 1 ? 1 : x2); // clip end;
+        return clip;
+    }
+    if(x1 < x2){ // line from left to right;
+        m = (y1-y2)/(x1-x2);
+        if(x1 < 0 && x2 >= 0){  // clip left
+            clip[0].x = 0;
+            clip[0].y = y1+(-x1*m);
+            if(x2 > 1){         // clip right
+                clip[1].x = 1;
+                clip[1].y = y1 + (1-x1)*m;
+            }
+        }else
+        if(x1 <= 1 && x2 > 1){ // clip right
+            clip[1].x = 1;
+            clip[1].y = y1 + (1-x1)*m;
+        }
+    }else{// line from right to left
+        m = (y2-y1)/(x2-x1);
+        if(x2 < 0 && x1 >= 0){  // clip left
+            clip[1].x = 0;
+            clip[1].y = y2+(-x2*m);
+            if(x1 > 1){       // clip right
+                clip[0].x = 1;
+                clip[0].y = y2 + (1-x2)*m;
+            }
+        }else
+        if(x2 <= 1 && x1 > 1){ // clip right
+            clip[0].x = 1;
+            clip[0].y = y2 + (1-x2)*m;
+        }
+    }   
+    // line is now clipped to left and right sides. 
+    // if the top and bottom are inside then done
+    if(clip[0].y >= 0 && clip[0].y <= 1 && clip[1].y >= 0 && clip[1].y <=1){ 
+        return clip;
+    }
+    // new clip line may be outside the box;
+    if((clip[0].y < 0 && clip[1].y < 0) || (clip[0].y > 1 && clip[1].y > 1)){ 
+        return undefined; // outside  box so return undefined
+    }
+    x1 = clip[0].x; // prep to clip to and bottom;
+    y1 = clip[0].y;
+    x2 = clip[1].x;
+    y2 = clip[1].y;
+
+    if(y1 < y2){ // line from top to bottom;
+        m = (x1-x2)/(y1-y2);
+        if(y1 < 0 && y2 >= 0){  // clip top
+            clip[0].x = x1+(-y1*m);
+            clip[0].y = 0;
+            if(y2 > 1){         // clip bottom
+                clip[1].x = x1 + (1-y1)*m;
+                clip[1].y = 1;
+            }
+        }else
+        if(y1 <= 1 && y2 > 1){ // clip bottom
+            clip[1].x = x1 + (1-y1)*m;
+            clip[1].y = 1;
+        }
+    }else{ // line from bottom to top
+        m = (x2-x1)/(y2-y1);
+        if(y2 < 0 && y1 >= 0){  // clip top
+            clip[1].x = x2+(-y2*m);
+            clip[1].y = 0;
+            if(y1 > 1){       // clip bottom
+                clip[0].x = x2 + (1-y2)*m;
+                clip[0].y = 1;
+            }
+        }else
+        if(y2 <= 1 && y1 > 1){ // clip bottom
+            clip[0].x = x2 + (1-y2)*m;
+            clip[0].y = 1;
+        }
+    }   
+    
+    // all done
+    return clip;
+}
+
 MMath.prototype.createCurve = function(curveData){  // creates a Curve from a set oof points
     if(this.curves === undefined){
         this.curves = [];
